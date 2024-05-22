@@ -6,15 +6,13 @@
 extern crate axlog2;
 extern crate alloc;
 
-#[cfg(all(target_os = "none", not(test)))]
-mod lang_items;
-
 use axerrno::{LinuxError, LinuxResult};
 use axhal::mem::{memory_regions, phys_to_virt};
 use axtype::DtbInfo;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use fork::{user_mode_thread, CloneFlags};
 use preempt_guard::NoPreempt;
+use core::panic::PanicInfo;
 
 #[cfg(feature = "smp")]
 mod mp;
@@ -38,7 +36,14 @@ d88P     888 888      "Y8888P  "Y8888   "Y88888P"   "Y8888P"
 
 /// The main entry point for monolithic kernel startup.
 #[cfg_attr(not(test), no_mangle)]
-pub fn rust_main(cpu_id: usize, dtb: usize) -> ! {
+pub extern "Rust" fn runtime_main(cpu_id: usize, dtb: usize) {
+    axhal::cpu::init_primary(cpu_id);
+    axtrap::init_trap();
+    init_allocator();
+
+    #[cfg(feature = "smp")]
+    mp::start_secondary_cpus(cpu_id);
+
     ax_println!("{}", LOGO);
     ax_println!(
         "\
@@ -82,12 +87,12 @@ pub fn rust_main(cpu_id: usize, dtb: usize) -> ! {
     info!("Initialize platform devices...");
     axhal::platform_init();
 
-    task::init();
-    run_queue::init();
+    let idle = task::init();
+    run_queue::init(idle);
 
     {
         let all_devices = axdriver::init_drivers();
-        let main_fs = axmount::init_filesystems(all_devices.block);
+        let main_fs = axmount::init_filesystems(all_devices.block, false);
         let root_dir = axmount::init_rootfs(main_fs);
         task::current().fs.lock().init(root_dir);
     }
@@ -110,6 +115,34 @@ pub fn rust_main(cpu_id: usize, dtb: usize) -> ! {
     start_kernel(dtb).expect("Fatal error!");
 
     panic!("Never reach here!");
+}
+
+pub fn init_allocator() {
+    use axhal::mem::{MemRegionFlags};
+
+    //log::info!("Initialize global memory allocator...");
+    //log::info!("  use {} allocator.", axalloc::global_allocator().name());
+
+    let mut max_region_size = 0;
+    let mut max_region_paddr = 0.into();
+    for r in memory_regions() {
+        if r.flags.contains(MemRegionFlags::FREE) && r.size > max_region_size {
+            max_region_size = r.size;
+            max_region_paddr = r.paddr;
+        }
+    }
+    for r in memory_regions() {
+        if r.flags.contains(MemRegionFlags::FREE) && r.paddr == max_region_paddr {
+            axalloc::global_init(phys_to_virt(r.paddr).as_usize(), r.size);
+            break;
+        }
+    }
+    for r in memory_regions() {
+        if r.flags.contains(MemRegionFlags::FREE) && r.paddr != max_region_paddr {
+            axalloc::global_add_memory(phys_to_virt(r.paddr).as_usize(), r.size)
+                .expect("add heap memory region failed");
+        }
+    }
 }
 
 fn start_kernel(dtb: usize) -> LinuxResult {
@@ -300,4 +333,9 @@ fn try_to_run_init_process(init_filename: &str) -> LinuxResult {
 fn run_init_process(init_filename: &str) -> LinuxResult {
     error!("run_init_process...");
     exec::kernel_execve(init_filename)
+}
+
+pub fn panic(info: &PanicInfo) -> ! {
+    error!("{}", info);
+    arch_boot::panic(info)
 }
