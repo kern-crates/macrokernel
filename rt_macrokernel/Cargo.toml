@@ -27,3 +27,6 @@ axerrno = { git = "ssh://git@github.com/shilei-massclouds/axerrno.git" }
 axtype = { git = "ssh://git@github.com/shilei-massclouds/axtype.git" }
 axdtb = { git = "ssh://git@github.com/shilei-massclouds/axdtb.git" }
 preempt_guard = { git = "ssh://git@github.com/shilei-massclouds/preempt_guard.git" }
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+raw-cpuid = "11.0"

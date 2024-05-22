@@ -38,11 +38,9 @@ d88P     888 888      "Y8888P  "Y8888   "Y88888P"   "Y8888P"
 #[cfg_attr(not(test), no_mangle)]
 pub extern "Rust" fn runtime_main(cpu_id: usize, dtb: usize) {
     axhal::cpu::init_primary(cpu_id);
+    axhal::arch::early_init();
     axtrap::init_trap();
     init_allocator();
-
-    #[cfg(feature = "smp")]
-    mp::start_secondary_cpus(cpu_id);
 
     ax_println!("{}", LOGO);
     ax_println!(
